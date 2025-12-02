@@ -15,9 +15,10 @@ jobs:
       SUBARCH: arm64
       KERNEL_DIR: ${{ github.workspace }}
       CLANG_PATH: ${{ github.workspace }}/clang-toolchain
-      GCC_PATH_AARCH64: ${{ github.workspace }}/gcc-toolchain-aarch64
-      # Clang 和 Binutils 设置
-      CROSS_COMPILE: aarch64-linux-android-
+      
+      # 核心编译变量：使用 LLVM/Clang 工具链
+      # 注意：CROSS_COMPILE 仍需设置，但路径只包含 Clang
+      CROSS_COMPILE: aarch64-linux-gnu- 
       CC: clang
       CLANG_TRIPLE: aarch64-linux-gnu-
 
@@ -35,20 +36,16 @@ jobs:
           ref: ${{ github.ref_name }} 
           depth: 1 
 
-      - name: 🛠️ 下载 AOSP 工具链 (已修正)
+      - name: 🛠️ 下载 AOSP Clang 工具链 (带 LLVM Binutils)
         run: |
           echo "Cloning AOSP Clang (android14-release)..."
+          # 只克隆 Clang 工具链。它包含了 LLVM 自己的 Binutils (如 llvm-ld, llvm-as)。
           git clone https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 --depth=1 -b android14-release $CLANG_PATH
-          
-          echo "Cloning AOSP GCC for binutils (main branch)..."
-          # 使用 'main' 分支来获取 binutils，确保克隆成功
-          git clone https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 --depth=1 -b main $GCC_PATH_AARCH64
 
       - name: 🛠️ PATH 设置 (关键步骤)
         run: |
-          # 必须将 bin 目录添加到 GitHub Actions 的 PATH 中
+          # 仅将 Clang 的 bin 目录添加到 PATH 中
           echo "$CLANG_PATH/bin" >> $GITHUB_PATH
-          echo "$GCC_PATH_AARCH64/bin" >> $GITHUB_PATH
 
       - name: 🧹 清理构建目录
         run: |
@@ -57,15 +54,15 @@ jobs:
 
       - name: ⚙️ 应用内核配置 (sdm670-perf_defconfig)
         run: |
-          make O=out sdm670-perf_defconfig
+          # 使用 LLVM=1 和 HOSTCC=gcc 预设进行配置
+          make O=out LLVM=1 HOSTCC=gcc sdm670-perf_defconfig
         working-directory: ${{ env.KERNEL_DIR }}
 
-      - name: 🚀 编译内核
+      - name: 🚀 编译内核 (使用 LLVM 模式)
         run: |
-          # 核心编译步骤：
-          # 添加 HOSTCC=gcc 确保编译主机工具时使用系统自带的 GCC
-          # 同时使用我们设置的 env 变量 (CC=clang, CROSS_COMPILE, etc.)
-          make O=out HOSTCC=gcc -j$(nproc --all)
+          # 核心编译：添加 LLVM=1 参数，强制使用 LLVM Binutils
+          # HOSTCC=gcc 确保编译主机工具时使用系统自带的 GCC
+          make O=out LLVM=1 HOSTCC=gcc -j$(nproc --all)
         working-directory: ${{ env.KERNEL_DIR }}
 
       - name: 📤 上传编译产物 (Kernel Image)
