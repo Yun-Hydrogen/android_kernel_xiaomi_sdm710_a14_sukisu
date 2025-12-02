@@ -8,7 +8,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-20.04  # 使用 Ubuntu 20.04 以获得更好的兼容性
+    runs-on: latest # 使用 Ubuntu 20.04 以获得更好的兼容性
     
     env:
       ARCH: arm64
