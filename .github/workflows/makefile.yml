@@ -1,4 +1,4 @@
-name: Build Xiaomi 8 SE Kernel (LineageOS A14) - 最终 LLVM 修正
+name: Build Xiaomi 8 SE Kernel (LineageOS A14) - 最终修正 (带 Symlink)
 
 on:
   push:
@@ -16,8 +16,9 @@ jobs:
       KERNEL_DIR: ${{ github.workspace }}
       CLANG_PATH: ${{ github.workspace }}/clang-toolchain
       
-      # 核心编译变量：使用 LLVM/Clang 工具链
-      CROSS_COMPILE: aarch64-linux-gnu- 
+      # 核心编译变量：我们不再使用传统的 GCC 前缀
+      # 而是依赖于 PATH 中的 LLVM 工具
+      CROSS_COMPILE: 
       CC: clang
       CLANG_TRIPLE: aarch64-linux-gnu-
 
@@ -43,24 +44,31 @@ jobs:
         run: |
           echo "$CLANG_PATH/bin" >> $GITHUB_PATH
 
-      - name: 🛠️ 设置 LLVM Binutils 强制路径 (解决 Assembler 错误)
+      - name: 🛠️ 创建 Clang/LLVM 符号链接 (解决 GCC 依赖检查)
         run: |
-          # 强制 Make 系统使用 LLVM 工具
+          # 这一步是关键，它解决了 'aarch64-linux-gnu-gcc: command not found' 的问题
+          CLANG_BIN="${{ env.CLANG_PATH }}/bin"
+          ln -sf "$CLANG_BIN/clang" "$CLANG_BIN/aarch64-linux-gnu-gcc"
+          ln -sf "$CLANG_BIN/ld.lld" "$CLANG_BIN/aarch64-linux-gnu-ld"
+          ln -sf "$CLANG_BIN/llvm-ar" "$CLANG_BIN/aarch64-linux-gnu-ar"
+
+      - name: 🛠️ 设置 LLVM Binutils 强制路径
+        run: |
           echo "LD=ld.lld" >> $GITHUB_ENV
-          echo "AS=clang" >> $GITHUB_ENV # Clang 可以作为汇编器
+          echo "AS=clang" >> $GITHUB_ENV
           echo "AR=llvm-ar" >> $GITHUB_ENV
           echo "NM=llvm-nm" >> $GITHUB_ENV
           echo "OBJCOPY=llvm-objcopy" >> $GITHUB_ENV
           echo "OBJDUMP=llvm-objdump" >> $GITHUB_ENV
           echo "STRIP=llvm-strip" >> $GITHUB_ENV
-
-      - name: 🧹 清理构建目录
+          
+      - name: 🧹 清理构建目录 (应能通过 GCC 检查)
         run: |
+          # 此时 make mrproper 应该能够通过 aarch64-linux-gnu-gcc 检查
           make O=out mrproper
         working-directory: ${{ env.KERNEL_DIR }}
 
       - name: ⚙️ 应用内核配置 (sdm670-perf_defconfig)
-        # 此时假设您已手动修改 defconfig 文件，移除了 CONFIG_CC_STACKPROTECTOR_*
         run: |
           make O=out LLVM=1 sdm670-perf_defconfig
         working-directory: ${{ env.KERNEL_DIR }}
@@ -70,10 +78,10 @@ jobs:
           make O=out LLVM=1 silentoldconfig
         working-directory: ${{ env.KERNEL_DIR }}
 
-      - name: 🚀 编译内核 (最终 LLVM 模式)
+      - name: 🚀 编译内核 (调试模式：-j1)
         run: |
-          # 移除 HOSTCC=gcc
-          make O=out LLVM=1 -j$(nproc --all)
+          # 使用 -j1 降低并行度，以防错误被隐藏
+          make O=out LLVM=1 -j1 
         working-directory: ${{ env.KERNEL_DIR }}
 
       - name: 📤 上传编译产物 (Kernel Image)
