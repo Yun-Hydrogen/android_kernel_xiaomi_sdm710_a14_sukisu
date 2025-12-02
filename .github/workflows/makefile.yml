@@ -1,4 +1,4 @@
-name: Build Xiaomi 8 SE Kernel (LineageOS A14)
+name: Build Xiaomi 8 SE Kernel (LineageOS A14) - 手动配置
 
 on:
   push:
@@ -8,7 +8,6 @@ on:
 
 jobs:
   build:
-    # 使用最新的 Ubuntu 环境
     runs-on: ubuntu-latest
     
     env:
@@ -33,15 +32,12 @@ jobs:
       - name: ⬇️ 检出 LineageOS 内核源代码
         uses: actions/checkout@v4
         with:
-          # 检出当前分支的源代码
           ref: ${{ github.ref_name }} 
           depth: 1 
-          # 警告: 如果 'depth' 引起警告，可以尝试用 'fetch-depth: 1' 替换
 
       - name: 🛠️ 下载 AOSP Clang 工具链 (带 LLVM Binutils)
         run: |
           echo "Cloning AOSP Clang (android14-release)..."
-          # 只克隆 Clang 工具链，它包含所有必需的 LLVM Binutils。
           git clone https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 --depth=1 -b android14-release $CLANG_PATH
 
       - name: 🛠️ PATH 设置 (将 Clang/LLVM Binutils 添加到路径)
@@ -54,24 +50,16 @@ jobs:
         working-directory: ${{ env.KERNEL_DIR }}
 
       - name: ⚙️ 应用内核配置 (sdm670-perf_defconfig)
+        # 注意：这一步会生成初始的 .config 文件，如果您已手动修改 Kconfig，请确保修改已到位。
         run: |
-          # 1. 应用 defconfig，使用 LLVM 预设
           make O=out LLVM=1 HOSTCC=gcc sdm670-perf_defconfig
         working-directory: ${{ env.KERNEL_DIR }}
         
-      - name: 🩹 修正配置 (解决 CONFIG_CC_STACKPROTECTOR_STRONG 错误)
-        run: |
-          echo "Patching .config to use REGULAR stack protector..."
-          # 将冲突的堆栈保护选项降级为 REGULAR，以兼容 LLVM 编译器
-          sed -i 's/CONFIG_CC_STACKPROTECTOR_STRONG=y/CONFIG_CC_STACKPROTECTOR_REGULAR=y/g' out/.config
-          
-          # 2. 强制静默更新配置，使修改生效并解决依赖
-          make O=out LLVM=1 HOSTCC=gcc silentoldconfig
-        working-directory: ${{ env.KERNEL_DIR }}
-
+      # ❗️ 注意：这里移除了自动修正配置的步骤 ❗️
+      
       - name: 🚀 编译内核 (使用 LLVM 模式)
         run: |
-          # 编译主机工具使用系统自带的 GCC (HOSTCC=gcc)，核心代码使用 Clang/LLVM (LLVM=1)
+          # 编译主机工具使用系统自带的 GCC，核心代码使用 Clang/LLVM
           make O=out LLVM=1 HOSTCC=gcc -j$(nproc --all)
         working-directory: ${{ env.KERNEL_DIR }}
 
