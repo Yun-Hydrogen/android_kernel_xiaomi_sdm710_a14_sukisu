@@ -1,0 +1,83 @@
+name: Build Xiaomi 8 SE Kernel (LineageOS A14)
+
+# 触发器设置:
+# 1. 当有代码推送到 'lineage-21' 分支时自动运行。
+# 2. 允许在 GitHub Actions 页面手动触发。
+on:
+  push:
+    branches:
+      - lineage-21
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    # 定义全局环境变量
+    env:
+      ARCH: arm64
+      SUBARCH: arm64
+      KERNEL_DIR: ${{ github.workspace }} # 编译目录为工作区根目录
+      CLANG_PATH: ${{ github.workspace }}/clang-toolchain
+      GCC_PATH_AARCH64: ${{ github.workspace }}/gcc-toolchain-aarch64
+      # AOSP 交叉编译工具链定义
+      CROSS_COMPILE: aarch64-linux-android-
+      CC: clang
+      CLANG_TRIPLE: aarch64-linux-gnu-
+
+    steps:
+      - name: 📦 安装编译依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential git bc bison flex libssl-dev \
+            libncurses5-dev libelf-dev curl
+
+      - name: ⬇️ 检出 LineageOS 内核源代码
+        uses: actions/checkout@v4
+        with:
+          # 检出此 workflow 所在的仓库和分支 (lineage-21)
+          ref: ${{ github.ref_name }} 
+          depth: 1 
+
+      - name: 🛠️ 下载 AOSP 工具链 (适用于 Android 14)
+        run: |
+          echo "Cloning AOSP Clang (android14-release)..."
+          # 使用最新的 AOSP Clang 编译器
+          git clone https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 --depth=1 -b android14-release $CLANG_PATH
+          
+          echo "Cloning AOSP GCC for binutils (android13-release)..."
+          # 使用兼容的 AOSP GCC binutils (解决了下载失败的问题)
+          git clone https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 --depth=1 -b android13-release $GCC_PATH_AARCH64
+
+      - name: 🛠️ PATH 设置 (将工具链添加到路径)
+        run: |
+          echo "$CLANG_PATH/bin" >> $GITHUB_PATH
+          echo "$GCC_PATH_AARCH64/bin" >> $GITHUB_PATH
+
+      - name: 🧹 清理构建目录
+        run: |
+          make O=out mrproper
+        working-directory: ${{ env.KERNEL_DIR }}
+
+      - name: ⚙️ 应用内核配置 (sdm670-perf_defconfig)
+        run: |
+          # make 会自动在 arch/arm64/configs/ 目录下查找 sdm670-perf_defconfig
+          make O=out sdm670-perf_defconfig
+        working-directory: ${{ env.KERNEL_DIR }}
+
+      - name: 🚀 编译内核
+        run: |
+          # 使用所有核心进行编译
+          make O=out -j$(nproc --all)
+        working-directory: ${{ env.KERNEL_DIR }}
+
+      - name: 📤 上传编译产物 (Kernel Image)
+        uses: actions/upload-artifact@v4
+        with:
+          name: lineageos-a14-kernel-xiaomi8se
+          path: |
+            ${{ env.KERNEL_DIR }}/out/arch/arm64/boot/Image
+            ${{ env.KERNEL_DIR }}/out/arch/arm64/boot/Image.gz
+            # 如果您的设备需要 Image.gz-dtb，也可以将其添加到路径中
+          if-no-files-found: error
