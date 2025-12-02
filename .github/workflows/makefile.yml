@@ -1,4 +1,4 @@
-name: Build Xiaomi 8 SE Kernel (LineageOS A14) - 手动配置
+name: Build Xiaomi 8 SE Kernel (LineageOS A14) - 最终 LLVM 修正
 
 on:
   push:
@@ -37,12 +37,22 @@ jobs:
 
       - name: 🛠️ 下载 AOSP Clang 工具链 (带 LLVM Binutils)
         run: |
-          echo "Cloning AOSP Clang (android14-release)..."
           git clone https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 --depth=1 -b android14-release $CLANG_PATH
 
       - name: 🛠️ PATH 设置 (将 Clang/LLVM Binutils 添加到路径)
         run: |
           echo "$CLANG_PATH/bin" >> $GITHUB_PATH
+
+      - name: 🛠️ 设置 LLVM Binutils 强制路径 (解决 Assembler 错误)
+        run: |
+          # 强制 Make 系统使用 LLVM 工具
+          echo "LD=ld.lld" >> $GITHUB_ENV
+          echo "AS=clang" >> $GITHUB_ENV # Clang 可以作为汇编器
+          echo "AR=llvm-ar" >> $GITHUB_ENV
+          echo "NM=llvm-nm" >> $GITHUB_ENV
+          echo "OBJCOPY=llvm-objcopy" >> $GITHUB_ENV
+          echo "OBJDUMP=llvm-objdump" >> $GITHUB_ENV
+          echo "STRIP=llvm-strip" >> $GITHUB_ENV
 
       - name: 🧹 清理构建目录
         run: |
@@ -50,17 +60,20 @@ jobs:
         working-directory: ${{ env.KERNEL_DIR }}
 
       - name: ⚙️ 应用内核配置 (sdm670-perf_defconfig)
-        # 注意：这一步会生成初始的 .config 文件，如果您已手动修改 Kconfig，请确保修改已到位。
+        # 此时假设您已手动修改 defconfig 文件，移除了 CONFIG_CC_STACKPROTECTOR_*
         run: |
-          make O=out LLVM=1 HOSTCC=gcc sdm670-perf_defconfig
+          make O=out LLVM=1 sdm670-perf_defconfig
         working-directory: ${{ env.KERNEL_DIR }}
         
-      # ❗️ 注意：这里移除了自动修正配置的步骤 ❗️
-      
-      - name: 🚀 编译内核 (使用 LLVM 模式)
+      - name: 🩹 修正配置 (最终清理)
         run: |
-          # 编译主机工具使用系统自带的 GCC，核心代码使用 Clang/LLVM
-          make O=out LLVM=1 HOSTCC=gcc -j$(nproc --all)
+          make O=out LLVM=1 silentoldconfig
+        working-directory: ${{ env.KERNEL_DIR }}
+
+      - name: 🚀 编译内核 (最终 LLVM 模式)
+        run: |
+          # 移除 HOSTCC=gcc
+          make O=out LLVM=1 -j$(nproc --all)
         working-directory: ${{ env.KERNEL_DIR }}
 
       - name: 📤 上传编译产物 (Kernel Image)
