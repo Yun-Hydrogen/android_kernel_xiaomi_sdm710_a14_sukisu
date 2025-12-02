@@ -16,6 +16,7 @@ jobs:
       KERNEL_DIR: ${{ github.workspace }}
       CLANG_PATH: ${{ github.workspace }}/clang-toolchain
       GCC_PATH_AARCH64: ${{ github.workspace }}/gcc-toolchain-aarch64
+      # Clang 和 Binutils 设置
       CROSS_COMPILE: aarch64-linux-android-
       CC: clang
       CLANG_TRIPLE: aarch64-linux-gnu-
@@ -34,17 +35,18 @@ jobs:
           ref: ${{ github.ref_name }} 
           depth: 1 
 
-      - name: 🛠️ 下载 AOSP 工具链 (最终修正版)
+      - name: 🛠️ 下载 AOSP 工具链 (已修正)
         run: |
           echo "Cloning AOSP Clang (android14-release)..."
           git clone https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 --depth=1 -b android14-release $CLANG_PATH
           
           echo "Cloning AOSP GCC for binutils (main branch)..."
-          # 最终修正: 使用 'main' 分支来获取此仓库中可用的 binutils
+          # 使用 'main' 分支来获取 binutils，确保克隆成功
           git clone https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 --depth=1 -b main $GCC_PATH_AARCH64
 
-      - name: 🛠️ PATH 设置 (将工具链添加到路径)
+      - name: 🛠️ PATH 设置 (关键步骤)
         run: |
+          # 必须将 bin 目录添加到 GitHub Actions 的 PATH 中
           echo "$CLANG_PATH/bin" >> $GITHUB_PATH
           echo "$GCC_PATH_AARCH64/bin" >> $GITHUB_PATH
 
@@ -60,7 +62,10 @@ jobs:
 
       - name: 🚀 编译内核
         run: |
-          make O=out -j$(nproc --all)
+          # 核心编译步骤：
+          # 添加 HOSTCC=gcc 确保编译主机工具时使用系统自带的 GCC
+          # 同时使用我们设置的 env 变量 (CC=clang, CROSS_COMPILE, etc.)
+          make O=out HOSTCC=gcc -j$(nproc --all)
         working-directory: ${{ env.KERNEL_DIR }}
 
       - name: 📤 上传编译产物 (Kernel Image)
