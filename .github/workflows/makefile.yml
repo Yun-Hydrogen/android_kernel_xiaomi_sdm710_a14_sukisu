@@ -17,7 +17,6 @@ jobs:
       CLANG_PATH: ${{ github.workspace }}/clang-toolchain
       
       # 核心编译变量：使用 LLVM/Clang 工具链
-      # 注意：CROSS_COMPILE 仍需设置，但路径只包含 Clang
       CROSS_COMPILE: aarch64-linux-gnu- 
       CC: clang
       CLANG_TRIPLE: aarch64-linux-gnu-
@@ -38,13 +37,10 @@ jobs:
 
       - name: 🛠️ 下载 AOSP Clang 工具链 (带 LLVM Binutils)
         run: |
-          echo "Cloning AOSP Clang (android14-release)..."
-          # 只克隆 Clang 工具链。它包含了 LLVM 自己的 Binutils (如 llvm-ld, llvm-as)。
           git clone https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 --depth=1 -b android14-release $CLANG_PATH
 
-      - name: 🛠️ PATH 设置 (关键步骤)
+      - name: 🛠️ PATH 设置
         run: |
-          # 仅将 Clang 的 bin 目录添加到 PATH 中
           echo "$CLANG_PATH/bin" >> $GITHUB_PATH
 
       - name: 🧹 清理构建目录
@@ -54,14 +50,23 @@ jobs:
 
       - name: ⚙️ 应用内核配置 (sdm670-perf_defconfig)
         run: |
-          # 使用 LLVM=1 和 HOSTCC=gcc 预设进行配置
+          # 1. 应用 defconfig
           make O=out LLVM=1 HOSTCC=gcc sdm670-perf_defconfig
+        working-directory: ${{ env.KERNEL_DIR }}
+        
+      - name: 🩹 修正配置 (解决 CONFIG_CC_STACKPROTECTOR_STRONG 错误)
+        run: |
+          echo "Patching .config to use REGULAR stack protector..."
+          # 将冲突的堆栈保护选项降级为 REGULAR，以兼容 LLVM 编译器
+          sed -i 's/CONFIG_CC_STACKPROTECTOR_STRONG=y/CONFIG_CC_STACKPROTECTOR_REGULAR=y/g' out/.config
+          
+          # 2. 重新配置以使修改生效
+          make O=out LLVM=1 HOSTCC=gcc olddefconfig
         working-directory: ${{ env.KERNEL_DIR }}
 
       - name: 🚀 编译内核 (使用 LLVM 模式)
         run: |
-          # 核心编译：添加 LLVM=1 参数，强制使用 LLVM Binutils
-          # HOSTCC=gcc 确保编译主机工具时使用系统自带的 GCC
+          # 编译主机工具时使用系统自带的 GCC，核心代码使用 Clang/LLVM
           make O=out LLVM=1 HOSTCC=gcc -j$(nproc --all)
         working-directory: ${{ env.KERNEL_DIR }}
 
