@@ -1,4 +1,4 @@
-name: Build Xiaomi 8 SE Kernel (LineageOS A14) - 最终修正版
+name: Build Xiaomi 8 SE Kernel (LineageOS A14) - 最终修正 (带 Symlink)
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
 
 jobs:
   build:
-    runs-on: Ubuntu-latest # 使用 Ubuntu 20.04 以获得更好的兼容性
+    runs-on: ubuntu-latest
     
     env:
       ARCH: arm64
@@ -16,20 +16,19 @@ jobs:
       KERNEL_DIR: ${{ github.workspace }}
       CLANG_PATH: ${{ github.workspace }}/clang-toolchain
       
-      # 核心编译变量
-      CROSS_COMPILE: aarch64-linux-gnu-
+      # 核心编译变量：我们不再使用传统的 GCC 前缀
+      # 而是依赖于 PATH 中的 LLVM 工具
+      CROSS_COMPILE: 
       CC: clang
       CLANG_TRIPLE: aarch64-linux-gnu-
 
     steps:
-      - name: 📦 安装编译依赖 (完整版)
+      - name: 📦 安装编译依赖
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential git bc bison flex libssl-dev \
-            libncurses5-dev libelf-dev curl gcc gcc-aarch64-linux-gnu \
-            g++ g++-aarch64-linux-gnu python3 python3-pip make \
-            automake autoconf libtool pkg-config
+            libncurses5-dev libelf-dev curl
 
       - name: ⬇️ 检出 LineageOS 内核源代码
         uses: actions/checkout@v4
@@ -37,119 +36,59 @@ jobs:
           ref: ${{ github.ref_name }} 
           depth: 1 
 
-      - name: 🛠️ 下载 AOSP Clang 工具链 (稳定版本)
+      - name: 🛠️ 下载 AOSP Clang 工具链 (带 LLVM Binutils)
         run: |
-          # 使用 r450784d 版本，这是一个稳定版本
-          mkdir -p $CLANG_PATH
-          cd $CLANG_PATH
-          wget https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/tags/android-14.0.0_r1/clang-r450784d.tar.gz
-          tar -xzf clang-r450784d.tar.gz
-          rm clang-r450784d.tar.gz
-          
-          # 下载 LLVM binutils
-          wget https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/tags/android-14.0.0_r1/llvm-binutils.tar.gz
-          tar -xzf llvm-binutils.tar.gz
-          rm llvm-binutils.tar.gz
+          git clone https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 --depth=1 -b android14-release $CLANG_PATH
 
-      - name: 🛠️ PATH 设置 (将 Clang/LLVM 添加到路径)
+      - name: 🛠️ PATH 设置 (将 Clang/LLVM Binutils 添加到路径)
         run: |
           echo "$CLANG_PATH/bin" >> $GITHUB_PATH
-          echo "$CLANG_PATH/clang-r450784d/bin" >> $GITHUB_PATH
-          echo "$CLANG_PATH/llvm-binutils" >> $GITHUB_PATH
 
-      - name: 🧹 清理构建目录
+      - name: 🛠️ 创建 Clang/LLVM 符号链接 (解决 GCC 依赖检查)
         run: |
-          make O=out mrproper || true
+          # 这一步是关键，它解决了 'aarch64-linux-gnu-gcc: command not found' 的问题
+          CLANG_BIN="${{ env.CLANG_PATH }}/bin"
+          ln -sf "$CLANG_BIN/clang" "$CLANG_BIN/aarch64-linux-gnu-gcc"
+          ln -sf "$CLANG_BIN/ld.lld" "$CLANG_BIN/aarch64-linux-gnu-ld"
+          ln -sf "$CLANG_BIN/llvm-ar" "$CLANG_BIN/aarch64-linux-gnu-ar"
+
+      - name: 🛠️ 设置 LLVM Binutils 强制路径
+        run: |
+          echo "LD=ld.lld" >> $GITHUB_ENV
+          echo "AS=clang" >> $GITHUB_ENV
+          echo "AR=llvm-ar" >> $GITHUB_ENV
+          echo "NM=llvm-nm" >> $GITHUB_ENV
+          echo "OBJCOPY=llvm-objcopy" >> $GITHUB_ENV
+          echo "OBJDUMP=llvm-objdump" >> $GITHUB_ENV
+          echo "STRIP=llvm-strip" >> $GITHUB_ENV
+          
+      - name: 🧹 清理构建目录 (应能通过 GCC 检查)
+        run: |
+          # 此时 make mrproper 应该能够通过 aarch64-linux-gnu-gcc 检查
+          make O=out mrproper
         working-directory: ${{ env.KERNEL_DIR }}
 
-      - name: ⚙️ 生成配置文件
+      - name: ⚙️ 应用内核配置 (sdm670-perf_defconfig)
         run: |
-          # 首先确保配置目录存在
-          mkdir -p out
-          
-          # 使用 ARCH 和 CROSS_COMPILE 环境变量
-          export ARCH=arm64
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          
-          # 生成默认配置
-          make O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- sdm670-perf_defconfig
+          make O=out LLVM=1 sdm670-perf_defconfig
+        working-directory: ${{ env.KERNEL_DIR }}
+        
+      - name: 🩹 修正配置 (最终清理)
+        run: |
+          make O=out LLVM=1 silentoldconfig
         working-directory: ${{ env.KERNEL_DIR }}
 
-      - name: 🔧 修正配置以使用 LLVM
+      - name: 🚀 编译内核 (调试模式：-j1)
         run: |
-          # 手动调整配置以使用 LLVM
-          cd out
-          # 确保使用 LLVM
-          echo "CONFIG_LLVM=1" >> .config
-          echo "# CONFIG_CC_IS_GCC is not set" >> .config
-          echo "CONFIG_CC_IS_CLANG=y" >> .config
-          echo "CONFIG_CLANG_VERSION=140000" >> .config
-          echo "CONFIG_AS_IS_LLVM=y" >> .config
-          
-          # 禁用可能导致问题的 GCC 特定功能
-          sed -i '/CONFIG_CC_STACKPROTECTOR/d' .config
-          sed -i '/CONFIG_STACKPROTECTOR/d' .config
-          sed -i '/CONFIG_STACKPROTECTOR_STRONG/d' .config
-          
-          # 重新生成配置
-          make O=../out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
+          # 使用 -j1 降低并行度，以防错误被隐藏
+          make O=out LLVM=1 -j1 
         working-directory: ${{ env.KERNEL_DIR }}
 
-      - name: 🚀 编译内核 (使用正确的环境变量)
-        run: |
-          # 设置所有必要的环境变量
-          export ARCH=arm64
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          export CLANG_PATH=${{ env.CLANG_PATH }}/clang-r450784d
-          export CLANG_BIN=$CLANG_PATH/bin
-          export PATH=$CLANG_BIN:$PATH
-          
-          # 为 host 工具使用 gcc
-          export HOSTCC=gcc
-          export HOSTCXX=g++
-          export HOSTLD=ld
-          
-          # 为内核使用 clang
-          export CC=clang
-          export LD=ld.lld
-          export AS=clang
-          export AR=llvm-ar
-          export NM=llvm-nm
-          export OBJCOPY=llvm-objcopy
-          export OBJDUMP=llvm-objdump
-          export STRIP=llvm-strip
-          
-          # 编译
-          echo "开始编译内核..."
-          make O=out \
-               ARCH=arm64 \
-               CROSS_COMPILE=aarch64-linux-gnu- \
-               CC=clang \
-               LD=ld.lld \
-               LLVM=1 \
-               LLVM_IAS=1 \
-               -j$(nproc --all) 2>&1 | tee build.log
-          
-          # 如果第一次失败，尝试不使用并行编译
-          if [ $? -ne 0 ]; then
-            echo "并行编译失败，尝试单线程编译..."
-            make O=out \
-                 ARCH=arm64 \
-                 CROSS_COMPILE=aarch64-linux-gnu- \
-                 CC=clang \
-                 LD=ld.lld \
-                 LLVM=1 \
-                 LLVM_IAS=1
-          fi
-        working-directory: ${{ env.KERNEL_DIR }}
-
-      - name: 📤 上传编译产物和日志
+      - name: 📤 上传编译产物 (Kernel Image)
         uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: compilation-artifacts
+          name: lineageos-a14-kernel-xiaomi8se
           path: |
             ${{ env.KERNEL_DIR }}/out/arch/arm64/boot/Image
             ${{ env.KERNEL_DIR }}/out/arch/arm64/boot/Image.gz
-            ${{ env.KERNEL_DIR }}/build.log
-          if-no-files-found: warn
+          if-no-files-found: error
